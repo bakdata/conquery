@@ -6,37 +6,47 @@ import java.util.Set;
 import javax.validation.constraints.NotEmpty;
 
 import com.bakdata.conquery.io.cps.CPSType;
+import com.bakdata.conquery.models.concepts.tree.validation.Prefix;
 import com.bakdata.conquery.util.CalculatedValue;
-import com.bakdata.conquery.util.CollectionsUtil;
 import com.fasterxml.jackson.annotation.JsonCreator;
-import lombok.AccessLevel;
-import lombok.AllArgsConstructor;
+import com.google.common.collect.Range;
+import com.google.common.collect.RangeSet;
+import com.google.common.collect.TreeRangeSet;
 import lombok.Getter;
-import lombok.Setter;
+import lombok.RequiredArgsConstructor;
 
 /**
  * This condition requires the value of another column to be equal to a given value.
  */
-@CPSType(id="COLUMN_EQUAL", base=CTCondition.class)
-@AllArgsConstructor(access = AccessLevel.PRIVATE)
-public class ColumnEqualCondition implements CTCondition {
+@CPSType(id = "COLUMN_EQUAL", base = ConceptTreeCondition.class)
+@RequiredArgsConstructor(onConstructor_ = @JsonCreator(mode = JsonCreator.Mode.PROPERTIES))
+public class ColumnEqualCondition implements ConceptTreeCondition {
 
-	@Setter @Getter @NotEmpty
-	private Set<String> values;
-	@NotEmpty @Setter @Getter
-	private String column;
+	@Getter
+	@NotEmpty
+	private final Set<String> values;
 
-	@JsonCreator(mode = JsonCreator.Mode.PROPERTIES)
-	public static ColumnEqualCondition create(Set<String> values, String column) {
-		return new ColumnEqualCondition(CollectionsUtil.createSmallestSet(values), column);
-	}
+	@NotEmpty
+	@Getter
+	private final String column;
+
 
 	@Override
 	public boolean matches(String value, CalculatedValue<Map<String, Object>> rowMap) {
 		Object checkedValue = rowMap.getValue().get(column);
-		if(checkedValue == null) {
+		if (checkedValue == null) {
 			return false;
 		}
 		return values.contains(checkedValue.toString());
+	}
+
+	@Override
+	public Map<String, RangeSet<Prefix>> getColumnSpan() {
+		final RangeSet<Prefix> rangeSet = TreeRangeSet.create();
+		for (String value : values) {
+			rangeSet.add(Range.singleton(Prefix.equal(value)));
+		}
+
+		return Map.of(getColumn(), rangeSet);
 	}
 }

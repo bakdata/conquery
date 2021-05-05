@@ -2,26 +2,44 @@ package com.bakdata.conquery.models.concepts.tree;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
+import javax.validation.Valid;
 import javax.validation.constraints.NotNull;
 
 import com.bakdata.conquery.models.concepts.ConceptElement;
-import com.bakdata.conquery.models.concepts.conditions.CTCondition;
+import com.bakdata.conquery.models.concepts.conditions.ConceptTreeCondition;
+import com.bakdata.conquery.models.concepts.tree.validation.Prefix;
 import com.bakdata.conquery.models.datasets.Dataset;
 import com.bakdata.conquery.models.exceptions.ConceptConfigurationException;
 import com.bakdata.conquery.models.identifiable.ids.specific.ConceptTreeChildId;
 import com.fasterxml.jackson.annotation.JsonBackReference;
+import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonManagedReference;
+import com.google.common.collect.RangeSet;
+import io.dropwizard.validation.ValidationMethod;
 import lombok.Getter;
+import lombok.NoArgsConstructor;
 import lombok.Setter;
+import lombok.extern.slf4j.Slf4j;
 
+@Slf4j
+@NoArgsConstructor(onConstructor_ = @JsonCreator)
 public class ConceptTreeChild extends ConceptElement<ConceptTreeChildId> implements ConceptTreeNode<ConceptTreeChildId> {
+
+	public ConceptTreeChild(String name){
+		super();
+		setName(name);
+	}
 
 	@JsonIgnore
 	private transient int[] prefix;
-	@JsonManagedReference //@Valid
+
+	@JsonManagedReference
+	@Valid
 	@Getter
 	@Setter
 	private List<ConceptTreeChild> children = Collections.emptyList();
@@ -37,10 +55,12 @@ public class ConceptTreeChild extends ConceptElement<ConceptTreeChildId> impleme
 	@Getter
 	@Setter
 	private int depth = 0;
+
+	@Valid
 	@Getter
 	@NotNull
 	@Setter
-	private CTCondition condition = null;
+	private ConceptTreeCondition condition = null;
 
 	@JsonIgnore
 	@Getter
@@ -99,5 +119,100 @@ public class ConceptTreeChild extends ConceptElement<ConceptTreeChildId> impleme
 	@Override
 	public Dataset getDataset() {
 		return getConcept().getDataset();
+	}
+
+	@JsonIgnore
+	private Map<String, RangeSet<Prefix>> columnSpan = null;
+
+	@JsonIgnore
+	public Map<String, RangeSet<Prefix>> getColumnSpan() {
+
+		// This will walk the whole sub-tree so caching is important for performance
+		if (columnSpan != null) {
+			return columnSpan;
+		}
+
+		final Map<String, RangeSet<Prefix>> span = new HashMap<>(condition.getColumnSpan());
+
+		for (ConceptTreeChild child : children) {
+			ConceptTreeCondition.mergeRanges(span, child.getColumnSpan());
+		}
+
+		return columnSpan = span;
+	}
+
+	public @interface Tree { }
+
+	@ValidationMethod(message = "Children are Overlapping with each other.", groups = {Tree.class})
+	@JsonIgnore
+	public boolean isChildrenAreNonOverlapping() {
+
+		for (int index = 0; index < children.size(); index++) {
+
+			ConceptTreeChild child = children.get(index);
+			final Map<String, RangeSet<Prefix>> childSpan = child.getColumnSpan();
+
+			// Siblings may not overlap with each other
+			for (int otherIndex = index + 1; otherIndex < children.size(); otherIndex++) {
+				final ConceptTreeChild other = children.get(otherIndex);
+
+				if (intersects(other.getColumnSpan(), childSpan)) {
+					log.error("`{}` intersects with its Sibling `{}`", child.getId(), other.getId());
+					return false;
+				}
+			}
+		}
+
+		return true;
+	}
+
+	@ValidationMethod(message = "Does not enclose all its children.", groups = {Tree.class})
+	@JsonIgnore
+	public boolean isEnclosingChildren() {
+		final Map<String, RangeSet<Prefix>> mySpan = condition.getColumnSpan();
+
+		for (ConceptTreeChild child : children) {
+
+			final Map<String, RangeSet<Prefix>> childSpan = child.getColumnSpan();
+
+			// Children have to be enclosed by parent
+			if (!encloses(mySpan, childSpan)) {
+				log.error("`{}` does not enclose Child `{}`", this.getId(), child.getId());
+				return false;
+			}
+		}
+
+		return true;
+	}
+
+	private static boolean encloses(Map<String, RangeSet<Prefix>> mySpan, Map<String, RangeSet<Prefix>> childSpan) {
+		for (Map.Entry<String, RangeSet<Prefix>> entry : childSpan.entrySet()) {
+			// Not defined spans everything
+			if (!mySpan.containsKey(entry.getKey())) {
+				continue;
+			}
+
+			if (mySpan.get(entry.getKey()).enclosesAll(entry.getValue())) {
+				continue;
+			}
+
+			return false;
+		}
+
+		return true;
+	}
+
+	private static boolean intersects(Map<String, RangeSet<Prefix>> left, Map<String, RangeSet<Prefix>> right) {
+		for (String column : left.keySet()) {
+			if (!right.containsKey(column)) {
+				continue;
+			}
+
+			if (right.get(column).asRanges().stream().anyMatch(left.get(column)::intersects)) {
+				return true;
+			}
+		}
+
+		return false;
 	}
 }

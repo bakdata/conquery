@@ -8,24 +8,30 @@ import javax.validation.constraints.NotEmpty;
 
 import com.bakdata.conquery.io.cps.CPSType;
 import com.bakdata.conquery.models.concepts.tree.ConceptTreeNode;
+import com.bakdata.conquery.models.concepts.tree.validation.Prefix;
 import com.bakdata.conquery.models.exceptions.ConceptConfigurationException;
 import com.bakdata.conquery.util.CalculatedValue;
+import com.fasterxml.jackson.annotation.JsonCreator;
+import com.google.common.collect.RangeSet;
 import lombok.Getter;
-import lombok.Setter;
+import lombok.RequiredArgsConstructor;
 
 /**
  * This condition connects multiple conditions with an and.
  */
-@CPSType(id="AND", base=CTCondition.class)
-public class AndCondition implements CTCondition {
+@CPSType(id = "AND", base = ConceptTreeCondition.class)
+@RequiredArgsConstructor(onConstructor_ = @JsonCreator(mode = JsonCreator.Mode.PROPERTIES))
+public class AndCondition implements ConceptTreeCondition {
 
-	@Setter @Getter @Valid @NotEmpty
-	private List<CTCondition> conditions;
+	@Getter
+	@Valid
+	@NotEmpty
+	private final List<ConceptTreeCondition> conditions;
 
 	@Override
 	public boolean matches(String value, CalculatedValue<Map<String, Object>> rowMap) throws ConceptConfigurationException {
-		for(CTCondition cond:conditions) {
-			if(!cond.matches(value, rowMap)) {
+		for (ConceptTreeCondition cond : conditions) {
+			if (!cond.matches(value, rowMap)) {
 				return false;
 			}
 		}
@@ -33,9 +39,15 @@ public class AndCondition implements CTCondition {
 	}
 
 	@Override
+	public Map<String, RangeSet<Prefix>> getColumnSpan() {
+		return ConceptTreeCondition.mergeAll(getConditions());
+	}
+
+	@Override
 	public void init(ConceptTreeNode node) throws ConceptConfigurationException {
-		for(CTCondition cond:conditions) {
+		for (ConceptTreeCondition cond : conditions) {
 			cond.init(node);
 		}
 	}
+
 }
