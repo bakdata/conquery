@@ -38,7 +38,6 @@ import org.apache.commons.lang3.ArrayUtils;
 @Setter
 public class SecondaryIdQueryPlan implements QueryPlan<MultilineEntityResult> {
 
-	public static final int VALIDITY_DATE_POSITION = ConceptQueryPlan.VALIDITY_DATE_POSITION + 1;
 	private final ConceptQueryPlan query;
 	private final SecondaryIdDescription secondaryId;
 
@@ -81,7 +80,7 @@ public class SecondaryIdQueryPlan implements QueryPlan<MultilineEntityResult> {
 
 		// Prepend the key (ie the actual SecondaryId) to the result.
 		for (Map.Entry<String, ConceptQueryPlan> child : childPerKey.entrySet()) {
-			if (!child.getValue().isContained()) {
+			if (!child.getValue().aggregationFiltersApply().orElse(true)) {
 				continue;
 			}
 
@@ -139,6 +138,9 @@ public class SecondaryIdQueryPlan implements QueryPlan<MultilineEntityResult> {
 
 	private void executeQueriesWithoutSecondaryId(QueryExecutionContext ctx, Entity entity, Table currentTable) {
 
+		// Execute sub-queries withour secondary id
+		childPerKey.values().forEach(q -> q.executeSubQueries(ctx, entity));
+
 		nextTable(ctx, currentTable);
 
 		final List<Bucket> tableBuckets = ctx.getBucketManager().getEntityBucketsForTable(entity, currentTable);
@@ -186,11 +188,13 @@ public class SecondaryIdQueryPlan implements QueryPlan<MultilineEntityResult> {
 	 */
 	private ConceptQueryPlan createChild(Column secondaryIdColumn, QueryExecutionContext currentContext, Bucket currentBucket) {
 
-		ConceptQueryPlan plan = query.clone(new CloneContext(currentContext.getStorage()));
+		CloneContext cloneContext = new CloneContext(currentContext.getStorage());
+		ConceptQueryPlan plan = cloneContext.clone(query);
 
 		QueryExecutionContext context = QueryUtils.determineDateAggregatorForContext(currentContext, plan::getValidityDateAggregator);
 
 		plan.init(query.getEntity(), context);
+		plan.executeSubQueries(context, getQuery().getEntity());
 		plan.nextTable(context, secondaryIdColumn.getTable());
 		plan.isOfInterest(currentBucket);
 		plan.nextBlock(currentBucket);
@@ -199,8 +203,8 @@ public class SecondaryIdQueryPlan implements QueryPlan<MultilineEntityResult> {
 	}
 
 	@Override
-	public QueryPlan clone(CloneContext ctx) {
-		return new SecondaryIdQueryPlan(query.clone(ctx), secondaryId, tablesWithSecondaryId, tablesWithoutSecondaryId);
+	public QueryPlan doClone(CloneContext ctx) {
+		return new SecondaryIdQueryPlan(ctx.clone(query), secondaryId, tablesWithSecondaryId, tablesWithoutSecondaryId);
 	}
 
 	@Override

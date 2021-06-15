@@ -1,9 +1,6 @@
 package com.bakdata.conquery.models.query.queryplan;
 
-import java.util.Collection;
-import java.util.Collections;
-import java.util.List;
-import java.util.Set;
+import java.util.*;
 
 import com.bakdata.conquery.models.common.CDateSet;
 import com.bakdata.conquery.models.datasets.Table;
@@ -64,22 +61,23 @@ public abstract class QPChainNode extends QPNode {
 	}
 	
 	@Override
-	public boolean isContained() {
-		return child.isContained();
+	public Optional<Boolean> aggregationFiltersApply() {
+		return child.aggregationFiltersApply();
 	}
 	
 	@Override
 	public boolean isOfInterest(Bucket bucket) {
 		return child.isOfInterest(bucket);
 	}
-	
-	@Override
-	public boolean isOfInterest(Entity entity) {
-		return true;
-	}
 
 	@Override
 	public Collection<Aggregator<CDateSet>> getDateAggregators() {
 		return child.getDateAggregators();
+	}
+
+
+	@Override
+	public Optional<Boolean> eventFiltersApply(Bucket bucket, int event) {
+		return child.eventFiltersApply(bucket, event);
 	}
 }

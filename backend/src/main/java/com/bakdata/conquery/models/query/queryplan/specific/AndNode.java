@@ -3,8 +3,10 @@ package com.bakdata.conquery.models.query.queryplan.specific;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 import com.bakdata.conquery.models.datasets.Table;
+import com.bakdata.conquery.models.events.Bucket;
 import com.bakdata.conquery.models.query.queryplan.DateAggregationAction;
 import com.bakdata.conquery.models.query.queryplan.DateAggregator;
 import com.bakdata.conquery.models.query.queryplan.QPNode;
@@ -30,12 +32,20 @@ public class AndNode extends QPParentNode {
 	}
 
 	@Override
-	public boolean isContained() {
-		boolean currently = true;
+	public Optional<Boolean> aggregationFiltersApply() {
+		Boolean currently = null;
 		for (QPNode agg : getChildren()) {
-			currently &= agg.isContained();
+			final Optional<Boolean> currently1 = agg.aggregationFiltersApply();
+			if (!currently1.isPresent()){
+				continue;
+			}
+			if(currently == null){
+				currently = currently1.get();
+				continue;
+			}
+			currently &= currently1.get();
 		}
-		return currently;
+		return currently != null ? Optional.of(currently) : Optional.empty();
 	}
 
 	public static QPNode of(Collection<? extends QPNode> children, DateAggregationAction action) {
@@ -47,5 +57,24 @@ public class AndNode extends QPParentNode {
 			default:
 				return new AndNode(new ArrayList<>(children), action);
 		}
+	}
+
+	@Override
+	public Optional<Boolean> eventFiltersApply(Bucket bucket, int event) {
+		if (currentTableChildren.isEmpty()){
+			return Optional.empty();
+		}
+		boolean foundTrue = false;
+		for (QPNode currentTableChild : currentTableChildren) {
+			final Optional<Boolean> result = currentTableChild.eventFiltersApply(bucket, event);
+			if (result.isEmpty()) {
+				continue;
+			}
+			if (!result.get()) {
+				return result;
+			}
+			foundTrue = true;
+		}
+		return foundTrue ? Optional.of(Boolean.TRUE) : Optional.empty();
 	}
 }

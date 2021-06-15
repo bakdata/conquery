@@ -1,6 +1,7 @@
 package com.bakdata.conquery.models.query.queryplan.specific.temporal;
 
 import java.util.Collection;
+import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.Set;
 
@@ -114,9 +115,10 @@ public class TemporalQueryNode extends QPNode {
 	 * @return true, iff the Events match the specific criteria.
 	 */
 	@Override
-	public final boolean isContained() {
-		if (!reference.getChild().isContained()) {
-			return false;
+	public final Optional<Boolean> aggregationFiltersApply() {
+		final Optional<Boolean> aggregationFilterResult = reference.getChild().aggregationFiltersApply();
+		if (aggregationFilterResult.isEmpty() || !aggregationFilterResult.get()) {
+			return aggregationFilterResult;
 		}
 
 		CDateSet referenceDurations = CDateSet.create(getReference().getChild().getDateAggregator().getAggregationResult());
@@ -127,7 +129,7 @@ public class TemporalQueryNode extends QPNode {
 		OptionalInt sampledReference = getReference().getSampler().sample(referenceDurations);
 
 		if (sampledReference.isEmpty()) {
-			return false;
+			return Optional.of(Boolean.FALSE);
 		}
 
 		matcher.removePreceding(precedingDurations, sampledReference.getAsInt());
@@ -136,10 +138,10 @@ public class TemporalQueryNode extends QPNode {
 
 		if (matcher.isContained(sampledReference, sampledPreceding)) {
 			dateUnion.merge(referenceDurations);
-			return true;
+			return Optional.of(Boolean.TRUE);
 		}
 
-		return false;
+		return Optional.of(Boolean.FALSE);
 	}
 
 	@Override
@@ -150,6 +152,12 @@ public class TemporalQueryNode extends QPNode {
 	@Override
 	public boolean isOfInterest(Bucket bucket) {
 		return reference.getChild().isOfInterest(bucket) || preceding.getChild().isOfInterest(bucket);
+	}
+
+	@Override
+	public Optional<Boolean> eventFiltersApply(Bucket bucket, int event) {
+		// TODO verify this
+		return Optional.of(Boolean.TRUE);
 	}
 
 	@Override

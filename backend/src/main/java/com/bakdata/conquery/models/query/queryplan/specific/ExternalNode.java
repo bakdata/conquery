@@ -2,6 +2,7 @@ package com.bakdata.conquery.models.query.queryplan.specific;
 
 import java.util.Collection;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 
 import javax.validation.constraints.NotEmpty;
@@ -64,10 +65,15 @@ public class ExternalNode extends QPNode {
 			dateUnion.acceptEvent(bucket, event);
 		}
 	}
-	
+
 	@Override
-	public boolean isContained() {
-		return contained != null && !contained.isEmpty();
+	public Optional<Boolean> eventFiltersApply(Bucket bucket, int event) {
+		return Optional.empty();
+	}
+
+	@Override
+	public Optional<Boolean> aggregationFiltersApply() {
+		return Optional.of(contained != null && !contained.isEmpty());
 	}
 
 	@Override

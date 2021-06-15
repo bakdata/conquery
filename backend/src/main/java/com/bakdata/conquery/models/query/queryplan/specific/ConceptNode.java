@@ -1,9 +1,6 @@
 package com.bakdata.conquery.models.query.queryplan.specific;
 
-import java.util.List;
-import java.util.Map;
-import java.util.Objects;
-import java.util.Set;
+import java.util.*;
 
 import com.bakdata.conquery.models.concepts.ConceptElement;
 import com.bakdata.conquery.models.datasets.SecondaryIdDescription;
@@ -110,8 +107,8 @@ public class ConceptNode extends QPChainNode {
 	}
 
 	@Override
-	public boolean isContained() {
-		return getChild().isContained();
+	public Optional<Boolean> aggregationFiltersApply() {
+		return getChild().aggregationFiltersApply();
 	}
 
 	@Override

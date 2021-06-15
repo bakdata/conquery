@@ -2,6 +2,7 @@ package com.bakdata.conquery.models.query.queryplan.aggregators.specific;
 
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Optional;
 
 import com.bakdata.conquery.models.datasets.Column;
 import com.bakdata.conquery.models.events.Bucket;
@@ -84,5 +85,10 @@ public class MultiSelectAggregator extends SingleColumnAggregator<Map<String, In
 		}
 
 		return super.isOfInterest(bucket);
+	}
+
+	@Override
+	public Optional<Boolean> eventFiltersApply(Bucket bucket, int event) {
+		throw new UnsupportedOperationException("This method should never be called on an aggregation filter");
 	}
 }

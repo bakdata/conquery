@@ -2,6 +2,7 @@ package com.bakdata.conquery.models.query.queryplan.specific;
 
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 
 import com.bakdata.conquery.models.common.CDateSet;
 import com.bakdata.conquery.models.common.daterange.CDateRange;
@@ -66,16 +67,29 @@ public class DateRestrictingNode extends QPChainNode {
 	}
 
 	@Override
-	public void acceptEvent(Bucket bucket, int event) {
-		if (validityDateColumn != null && !bucket.eventIsContainedIn(event, validityDateColumn, restriction)) {
-			return;
+	public Optional<Boolean> eventFiltersApply(Bucket bucket, int event) {
+		if (validityDateColumn == null) {
+			return Optional.empty();
 		}
-		getChild().acceptEvent(bucket, event);
+		if(!bucket.eventIsContainedIn(event, validityDateColumn, restriction)) {
+			return Optional.of(Boolean.FALSE);
+		}
+		return getChild().eventFiltersApply(bucket, event);
 	}
 
 	@Override
-	public boolean isContained() {
-		return getChild().isContained();
+	public void acceptEvent(Bucket bucket, int event) {
+		// The duplicate logic of this and eventFiltersApply might be preventable
+		// But an event that we rejected in eventFiltersApply can reappear here so we check again
+		// before pushing down
+		if (validityDateColumn == null) {
+			getChild().acceptEvent(bucket, event);
+			return;
+		}
+		if(!bucket.eventIsContainedIn(event, validityDateColumn, restriction)) {
+			return;
+		}
+		getChild().acceptEvent(bucket, event);
 	}
 
 	@Override
