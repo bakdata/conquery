@@ -1,24 +1,24 @@
 package com.bakdata.conquery.io.storage.xodus.stores;
 
-import java.io.BufferedInputStream;
-import java.io.ByteArrayInputStream;
 import java.io.Closeable;
 import java.io.IOException;
-import java.io.InputStream;
 import java.io.OutputStream;
-import java.io.SequenceInputStream;
+import java.io.PipedInputStream;
+import java.io.PipedOutputStream;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collection;
-import java.util.Iterator;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
-import java.util.stream.Stream;
 
 import javax.validation.Validator;
-import javax.validation.constraints.NotEmpty;
 
 import com.bakdata.conquery.io.jackson.Injectable;
 import com.bakdata.conquery.io.mina.ChunkingOutputStream;
@@ -32,26 +32,32 @@ import com.fasterxml.jackson.databind.ObjectReader;
 import com.fasterxml.jackson.databind.ObjectWriter;
 import com.google.common.primitives.Ints;
 import jetbrains.exodus.env.Environment;
+import lombok.Data;
 import lombok.Getter;
 import lombok.RequiredArgsConstructor;
 import lombok.Setter;
-import org.apache.commons.collections4.IteratorUtils;
+import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 
 /**
- * Store for big files. Files are stored in chunks of 100MB, it therefore requires two stores: one for metadata maintained in {@link BigStoreMetaKeys} the other for the data. BigStoreMeta contains a list of {@link UUID} which describe a single value in the store, to be read in order.
+ * Store for big files. Files are stored in chunks of 100MB, it therefore requires two stores: one for metadata maintained in the other for the data. BigStoreMeta contains a list of {@link UUID} which describe a single value in the store, to be read in order.
  */
 @Getter
+@Slf4j
 public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 
-	private final SerializingStore<KEY, BigStoreMetaKeys> metaStore;
+	private final SerializingStore<KEY, KeysContainer> metaStore;
 	private final SerializingStore<UUID, byte[]> dataStore;
 	private final ObjectWriter valueWriter;
 	private ObjectReader valueReader;
 
 	private final StoreInfo storeInfo;
 
-	@Getter @Setter
+	@Getter
+	@Setter
 	private int chunkByteSize;
+
+	private final ExecutorService service = Executors.newCachedThreadPool();
 
 
 	public BigStore(XodusStoreFactory config, Validator validator, Environment env, StoreInfo storeInfo, Collection<jetbrains.exodus.env.Store> openStores, Consumer<Environment> envCloseHook, Consumer<Environment> envRemoveHook, ObjectMapper mapper) {
@@ -63,7 +69,7 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 		final SimpleStoreInfo metaStoreInfo = new SimpleStoreInfo(
 				storeInfo.getName() + "_META",
 				storeInfo.getKeyType(),
-				BigStoreMetaKeys.class
+				KeysContainer.class
 		);
 
 		metaStore = new SerializingStore<>(
@@ -87,7 +93,6 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 		);
 
 
-
 		this.valueWriter = mapper.writerFor(storeInfo.getValueType());
 		this.valueReader = mapper.readerFor(storeInfo.getValueType());
 	}
@@ -103,7 +108,7 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 
 	@Override
 	public VALUE get(KEY key) {
-		BigStoreMetaKeys meta = metaStore.get(key);
+		KeysContainer meta = metaStore.get(key);
 		if (meta == null) {
 			return null;
 		}
@@ -111,10 +116,37 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 	}
 
 	@Override
-	public IterationStatistic forEach(StoreEntryConsumer<KEY, VALUE> consumer) {
-		return metaStore.forEach((key, value, length) -> {
-			consumer.accept(key, createValue(key, value), length);
+	@SneakyThrows
+	public IterationStatistic forEach(BiConsumer<KEY, VALUE> consumer) {
+
+		List<CompletableFuture<?>> futures = new ArrayList<>();
+		// We have to maintain our own futures and jobs on the outside, as we submit more tasks on top of the metaStores tasks
+
+		final IterationStatistic statistic = metaStore.forEach((key, chunkKeys) -> {
+			service.submit(() -> {
+				try {
+					final CompletableFuture<Void> futureLoaded =
+							loadData(chunkKeys.parts)
+									.thenAccept(data -> consumer.accept(key, data));
+
+					futures.add(futureLoaded);
+				}
+				catch (Exception e) {
+					log.error("Failed to read value for key {}", key, e);
+				}
+			});
 		});
+
+		// now wait for finalization of tasks before closing down
+		futures.forEach(CompletableFuture::join);
+
+		service.shutdown();
+
+		while (!service.awaitTermination(30, TimeUnit.SECONDS)) {
+			log.debug("Still waiting for {} to load.", this);
+		}
+
+		return statistic;
 	}
 
 	@Override
@@ -125,13 +157,13 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 
 	@Override
 	public void remove(KEY key) {
-		BigStoreMetaKeys meta = metaStore.get(key);
+		KeysContainer parts = metaStore.get(key);
 
-		if (meta == null) {
+		if (parts == null) {
 			return;
 		}
 
-		for (UUID id : meta.getParts()) {
+		for (UUID id : parts.getParts()) {
 			dataStore.remove(id);
 		}
 		metaStore.remove(key);
@@ -154,11 +186,11 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 	@Override
 	public Collection<KEY> getAllKeys() {
 		List<KEY> out = new ArrayList<>();
-		metaStore.forEach((key, value, size) -> out.add(key));
+		metaStore.forEach((key, value) -> out.add(key));
 		return out;
 	}
 
-	private BigStoreMetaKeys writeValue(VALUE value) {
+	private KeysContainer writeValue(VALUE value) {
 		try {
 			AtomicLong size = new AtomicLong();
 			List<UUID> uuids = new ArrayList<>();
@@ -181,25 +213,25 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 
 			try (OutputStream os = cos) {
 				valueWriter.writeValue(
-						cos,
+						os,
 						value
 				);
 			}
-			return new BigStoreMetaKeys(uuids.toArray(new UUID[0]), size.get());
-		} catch (Exception e) {
+			return new KeysContainer(uuids.toArray(new UUID[0]), -1);
+		}
+		catch (Exception e) {
 			throw new RuntimeException("Failed to write " + value, e);
 		}
 	}
 
-	private VALUE createValue(KEY key, BigStoreMetaKeys meta) {
-		Iterator<ByteArrayInputStream> it = meta.loadData(dataStore)
-												.map(ByteArrayInputStream::new)
-												.iterator();
+	private VALUE createValue(KEY key, KeysContainer meta) {
 
-		try (InputStream in = new BufferedInputStream(new SequenceInputStream(IteratorUtils.asEnumeration(it)))) {
-			return valueReader.readValue(in);
-		} catch (IOException e) {
-			throw new RuntimeException("Failed to read " + key, e);
+		try {
+			return loadData(meta.parts).get();
+		}
+		catch (InterruptedException | ExecutionException e) {
+			log.error("Failed to load {}", key, e);
+			throw new RuntimeException(e);
 		}
 	}
 
@@ -209,16 +241,63 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 		dataStore.close();
 	}
 
-	@Getter
-	@RequiredArgsConstructor(onConstructor = @__({@JsonCreator}))
-	public static class BigStoreMetaKeys {
-		@NotEmpty
-		private final UUID[] parts;
-		private final long size;
+	@SneakyThrows
+	private CompletableFuture<VALUE> loadData(UUID[] parts) {
+		final PipedInputStream sink = new PipedInputStream();
+		final PipedOutputStream outputStream = new PipedOutputStream(sink);
 
-		public Stream<byte[]> loadData(SerializingStore<UUID, byte[]> dataStore) {
-			return Arrays.stream(parts).map(dataStore::get);
+		// First is just a dummy.
+		CompletableFuture<Void> current = CompletableFuture.completedFuture(null);
+
+		for (final UUID id : parts) {
+			final CompletableFuture<?> prior = current;
+
+			// Submit chunk loading
+			current = CompletableFuture.runAsync(() -> {
+				log.trace("Begin loading chunk {}", id);
+				final byte[] out = dataStore.get(id);
+
+				// Wait till prior chunk is finished to write the next chunk
+				prior.join();
+				try {
+					outputStream.write(out);
+				}catch (Exception e){
+					throw new RuntimeException(e);
+				}
+			}, service);
 		}
+
+		// Read value in separate thread to minimize buffering
+		final CompletableFuture<VALUE> out = CompletableFuture.supplyAsync(() -> {
+			try {
+				final VALUE value = valueReader.readValue(sink);
+				sink.close();
+				return value;
+			}
+			catch (IOException e) {
+				throw new RuntimeException(e);
+			}
+		}, service);
+
+		// When done close the pipes
+		current.whenComplete((ignored, exc) -> {
+			// Fail the outgoing Future by supplying the inner exception.
+			if (exc != null) {
+				log.error("Error loading {}", parts, exc);
+				out.completeExceptionally(exc);
+			}
+
+			try {
+				log.trace("{} all done", parts);
+				outputStream.flush();
+				outputStream.close();
+			}
+			catch (IOException e) {
+				log.error("Failed to flush", e);
+			}
+		});
+
+		return out;
 	}
 
 	@Override
@@ -242,5 +321,12 @@ public class BigStore<KEY, VALUE> implements Store<KEY, VALUE>, Closeable {
 	public void removeStore() {
 		metaStore.removeStore();
 		dataStore.removeStore();
+	}
+
+	@Data
+	@RequiredArgsConstructor(onConstructor_ = @JsonCreator)
+	static class KeysContainer {
+		private final UUID[] parts;
+		private final int size; //TODO unused
 	}
 }

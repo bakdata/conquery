@@ -2,10 +2,8 @@ package com.bakdata.conquery.io.storage.xodus.stores;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.IOException;
-import java.io.SequenceInputStream;
 import java.nio.file.Files;
 import java.util.ArrayList;
 
@@ -22,7 +20,6 @@ import com.bakdata.conquery.models.identifiable.CentralRegistry;
 import com.bakdata.conquery.models.identifiable.ids.specific.DictionaryId;
 import com.bakdata.conquery.models.worker.SingletonNamespaceCollection;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.google.common.collect.Iterators;
 import com.google.common.primitives.Ints;
 import io.dropwizard.jersey.validation.Validators;
 import io.dropwizard.util.DataSize;
@@ -91,10 +88,10 @@ public class BigStoreTest {
 		store.add(nDict.getId(), nDict);
 
 		// check if the bytes in the store are the same as bytes
-		assertThat(
-			new SequenceInputStream(Iterators.asEnumeration(
-				store.getMetaStore().get(nDict.getId()).loadData(store.getDataStore()).map(ByteArrayInputStream::new).iterator())))
-					.hasSameContentAs(new ByteArrayInputStream(bytes));
+		final Dictionary sink = store.get(nDict.getId());
+
+		assertThat(sink)
+				.usingFieldByFieldElementComparator().isEqualTo(nDict);
 
 		EncodedDictionary copy = new EncodedDictionary(store.get(nDict.getId()), StringTypeEncoded.Encoding.UTF8);
 		for (int v = 0; v < 1000000; v++) {
@@ -121,10 +118,11 @@ public class BigStoreTest {
 		store.add(nDict.getId(), nDict);
 
 		// check if the bytes in the store are the same as bytes
-		assertThat(
-			new SequenceInputStream(Iterators.asEnumeration(
-				store.getMetaStore().get(nDict.getId()).loadData(store.getDataStore()).map(ByteArrayInputStream::new).iterator())))
-					.hasSameContentAs(new ByteArrayInputStream(bytes));
+		final Dictionary sink = store.get(nDict.getId());
+
+
+		assertThat(sink).usingFieldByFieldElementComparator().isEqualTo(nDict);
+
 
 		Dictionary copy = store.get(nDict.getId());
 		assertThat(copy).isEmpty();
