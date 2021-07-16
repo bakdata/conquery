@@ -1,42 +1,20 @@
 package com.bakdata.conquery.models.config;
 
+import java.util.HashMap;
+import java.util.Map;
+
+import com.bakdata.conquery.apiv1.query.concept.specific.external.FormatColumn;
+import com.bakdata.conquery.apiv1.query.concept.specific.external.IdColumn;
 import com.bakdata.conquery.io.cps.CPSType;
-import com.bakdata.conquery.models.identifiable.mapping.CsvEntityId;
-import com.bakdata.conquery.models.identifiable.mapping.DefaultIdMappingAccessor;
-import com.bakdata.conquery.models.identifiable.mapping.IdMappingAccessor;
+import com.bakdata.conquery.models.identifiable.mapping.EntityIdMap;
+import com.bakdata.conquery.models.identifiable.mapping.EntityPrintId;
 import com.bakdata.conquery.models.identifiable.mapping.IdMappingConfig;
-import org.apache.commons.lang3.ArrayUtils;
+import com.univocity.parsers.common.record.Record;
 
-import java.util.List;
+/**
+ * Maps input to itself for upload.
+ */
+public class SimpleIdMapping extends NoIdMapping {
 
-@CPSType(base = IdMappingConfig.class, id = "SIMPLE")
-public class SimpleIdMapping extends IdMappingConfig {
-
-	@Override
-	public IdMappingAccessor[] getIdAccessors() {
-		return new IdMappingAccessor[]{
-				new DefaultIdMappingAccessor(new int[]{0}, new String[]{"result"}) {
-					@Override
-					public CsvEntityId getFallbackCsvId(String[] reorderedCsvLine) {
-						return new CsvEntityId(reorderedCsvLine[0]);
-					}
-
-					@Override
-					public int findIndexFromMappingHeader(String csvHeaderField) {
-						return ArrayUtils.indexOf(getHeader(), csvHeaderField);
-					}
-				}
-		};
-	}
-
-	@Override
-	public List<String> getPrintIdFields() {
-		return List.of("result");
-	}
-
-	@Override
-	public String[] getHeader() {
-		return new String[]{"id", "result"};
-	}
 
 }
